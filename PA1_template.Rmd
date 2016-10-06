@@ -8,18 +8,166 @@ output:
 
 ## Loading and preprocessing the data
 
+The data are provided in this catalog, but may also be obtained from
+ [Activity monitoring data](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2Factivity.zip) [52K]
 
+Data are read from this file, and date strings are formatted into type Date for convenience.
+
+```{r preprocessing}
+unzip("activity.zip")
+activity <- read.csv("activity.csv")
+activity$date <- as.Date(activity$date, "%Y-%m-%d")
+```
+
+Some statistics describing the datasets
+```{r statistics_of_dataset}
+dim(activity)
+head(activity)
+summary(activity)
+```
 
 ## What is mean total number of steps taken per day?
+The missing values are ignored for these computations.
 
+The total number of steps are shown as a histogram below.
+```{r steps_per_day_hist}
+totalStep <- aggregate(steps ~ date, data = activity, sum)
+minSteps <- min(totalStep$steps)
+maxSteps <- max(totalStep$steps)
+noOfBins <- ceiling((maxSteps - minSteps)/1000)
+
+library("ggplot2")
+ggplot(totalStep, aes(steps)) +
+  geom_histogram(bins = noOfBins) +
+  coord_cartesian(xlim = c(minSteps, maxSteps)) +
+  scale_y_continuous(breaks = seq(0, maxSteps, 2)) +
+  xlab ("steps per day")
+```
+
+The average steps per day lays in the area of 10,000. The distribution appears 
+to be quite uniform, with little/no skewness. 
+
+```{r steps_per_day_stats}
+mn <- format(round(mean(totalStep$steps), 0), big.mark = ",")
+med <- format(median(totalStep$steps), big.mark = ",")
+```
+
+This is confirmed by means and median, which are nearly identical. 
+Mean = `r mn`,  Median = `r med`.
 
 
 ## What is the average daily activity pattern?
+The plot below shows the daily activity pattern. We can see that night is quiet, and 
+mornings are busy.
+```{r daily_activity_pattern}
+summaryStep <- aggregate(steps ~ interval, data = activity, mean)
+plot(summaryStep$interval, summaryStep$steps, type= "l", xlab= "Interval (resolution = 5 min)", 
+       ylab= "No of steps",  col="green" , lwd=2)
+```
 
-
+We expect to find the peek interval in the morning hours.
+```{r peek_interval}
+peekInterval <- summaryStep[summaryStep$steps == max(summaryStep$steps), "interval"]
+format(strptime(sprintf("%04d", peekInterval), format="%H%M"), format = "%H:%M")
+```
 
 ## Imputing missing values
 
+### 1 Overview
+Let´s get an overview over the missing values
+
+```{r na_summary}
+summary(is.na(activity))
+```
+
+We observe that there are only the column "steps" that have missing values.
+Let´s look at the distribution of this NAs.
+
+```{r na_detailed_summary}
+datesWithNas <- unique(activity[is.na(activity$steps) == TRUE, "date"])
+datesWithValues <- unique(activity[is.na(activity$steps) == FALSE, "date"])
+both <- as.Date(intersect(datesWithNas, datesWithValues), origin = "1970-01-01")
+if(length(both) > 0) {
+  both
+} else {
+  print("No dates contains both NAs and values")
+}
+```
+
+Surprisingly, we see that every date either has only NAs or only values.
+
+### 2 Strategy for filling missing values
+Normally I would just eliminate the dates that only have NAs.
+
+But since the assignment asks to fill in values, the mean value is chosen to be inserted.
+
+### 3 Imputing the missing values
+We will make a clean copy of the original dataframe and insert the missing values here.
+```{r impute}
+mn <- aggregate(steps ~ interval, data = activity, mean)
+imputed <- activity
+impute <- function(steps, interval) {
+    if (!is.na(steps))
+        return(c(steps))
+    else
+        return((mn[mn$interval==interval, "steps"]))
+}
+imputed$steps <- mapply(impute, imputed$steps, imputed$interval)
+```
+
+### 4 Histogram and summary by means cleaned dataset
+First we plot the histogram to see if it is affected by the imputation.
+```{r imputed_histogram}
+totalStepImputed <- aggregate(steps ~ date, data = imputed, sum)
+minSteps <- min(totalStepImputed$steps)
+maxSteps <- max(totalStepImputed$steps)
+noOfBins <- ceiling((maxSteps - minSteps)/1000)
+
+ggplot(totalStepImputed, aes(steps)) +
+  geom_histogram(bins = noOfBins) +
+  coord_cartesian(xlim = c(minSteps, maxSteps)) +
+  scale_y_continuous(breaks = seq(0, maxSteps, 2)) +
+  xlab ("steps per day")
+```
+
+The imputation does indeed affect the distribution. Since the imputation add mean values,
+it will show higher rates around the mean value than without imputation. To impute for
+entire dates which only contains NA values has probably distorted the data set.
+
+How has this affected the mean and median?
+```{r imputed_stats}
+mnUncleaned <- format(round(mean(totalStep$steps), 0), big.mark = ",")
+mnCleaned <- format(round(mean(totalStepImputed$steps), 0), big.mark = ",")
+medUncleaned <- format(round(median(totalStep$steps),0), big.mark = ",")
+medCleaned <- format(round(median(totalStepImputed$steps),0), big.mark = ",")
+```
+
+Unleaned mean = `r mnUncleaned`,  Cleaned mean = `r mnCleaned`. 
+Since the mean was filling value, it will not affect the total mean.
+
+Unleaned median = `r medUncleaned`,  Cleaned median = `r mnCleaned`. 
+There is a slight redistribution, but there is little skewness, hence median is almost identical.
 
 
 ## Are there differences in activity patterns between weekdays and weekends?
+
+To find out this, we will factor out weekday/weekend as a factor variable
+```{r factor_weekday_weekend}
+imputed$day <- weekdays(imputed$date)
+imputed$weekday <- ifelse(imputed$day %in% c("Saturday","Sunday"), "weekend", "weekday")
+imputed$weekday <- as.factor(imputed$weekday)
+```
+
+Then we compare the activity (steps) during weekdays and weekends.
+```{r cmp_weekdays_weekend}
+weekdaySummary <- aggregate(steps ~ interval + weekday, data = imputed, mean)
+
+ggplot(weekdaySummary, aes(interval, steps)) +
+  geom_line(color = "green") +
+  facet_grid( . ~ weekday) +
+  xlab ("Interval (resolution = 5 min)") +
+  ylab ("No of steps")
+```
+
+There are distinct differences in patterns. Weekdates has a higher peek activity during the morning, 
+while weekends has higher activity during afternoons and evenings.
